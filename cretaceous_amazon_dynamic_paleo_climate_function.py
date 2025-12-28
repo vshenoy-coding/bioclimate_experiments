@@ -638,6 +638,16 @@ def get_habitability_report():
     print(f"👤Human:                {round(human_score)}/100")
     print(f"🦖Dinosaur:             {round(dino_score)}/100")
 
+    # 8. Biome override logic
+    # Check if the fossils found suggest a marine environment
+    marine_classes = ['Bivalvia', 'Cephalopoda', 'Gastropoda', 'Chondrichthyes', Actinopterygii']
+    found_marine = any(m_class in str(fossil_list) for m_class in marine_classes)
+
+    if found_marine and not is_marine:
+      env_label = "🌊 Marine (Overriden by Fossil Evidence)"
+      # Adjust temperature slightly: water stays cooler than inland land
+      paleo_temp -= 3.0
+
 get_habitability_report()
                             
 
