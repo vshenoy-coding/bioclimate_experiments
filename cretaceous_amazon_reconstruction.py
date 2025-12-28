@@ -87,6 +87,7 @@ def climate_paleo_data(lat, lon, age):
 
   return {
     "paleo_lat": round(p_lat, 2),
+    "paleo_lon": round(p_lon, 2),
     "paleo_temp": est_cretaceous_temp,
     "paleo_precip": est_cretaceous_precip
   }
@@ -143,3 +144,78 @@ plt.annotate('Hothouse Shift', xy=(31, 2300), xytext=(22, 2800),
              arrowprops=dict(facecolor='black', shrink=0.05))
 
 plt.show()
+
+# The direction of that arrow represents the net vector of climate change between two vastly different 
+# climate of Earth's history.
+
+# To understand why it points southeast (moving "down" and "right") from the perspective 
+# of the modern green box, we have to look at the relationship between the modern data 
+# points and the Cretaceous results.
+# 1. The "Right" Shift (X-axis: Temperature)
+# The arrow points toward the right because the Cretaceous was a "Hothouse" climate.
+# Modern Average: ~27°C.
+# Cretaceous Average: ~33°C.
+# Result: A +6°C increase pushes the point significantly to the right, far outside the modern "Greenbox" thermal limit (which usually caps at 30°C).
+# 2. The "Downward" Shift (Y-axis: Precipitation)
+# This is where the visual can be counter-intuitive. 
+# In the plot of the Hothouse Shift, the arrow points "down" relative to the 
+# top of the green box because of how we define "Modern Tropical Rainforests."
+
+# The Modern Green Box: This box typically represents the entire range of modern tropical biomes, which can extend up to 4,500 mm of rain in places like the Chocó or the upper Amazon.
+# The 2023 Data Point: The specific modern Amazon point (~1,834 mm) is actually quite 
+# "low" in that box because of the drying trend that was discovered.
+# The Cretaceous Point: While 2,800 mm is a lot of rain, it is still lower than 
+# the "maximum possible" rainfall for a modern tropical rainforest.
+
+# 3. The "Southeast" Vector
+# The "Hothouse Shift" arrow is essentially saying:
+# "Compared to the theoretical maximum moisture and temperature of a modern forest, 
+# the Cretaceous was hotter (moving right) but less rainy than the absolute wettest 
+# modern jungles (moving down from the 4000mm ceiling)."
+# However, if you compare the 2023 point directly to the Cretaceous star, 
+# the arrow would actually point Northeast (Hotter and Wetter). 
+# The current arrow in the diagram is likely centered to show the shift from the 
+# center of the modern tropical "envelope" to the new Cretaceous reality.
+
+#The Green Box Ceiling: Modern tropical rainforests can receive up to 4500 mm of rain 
+# (like in parts of the Pacific coast of Colombia). 
+# The "Green Box" in the code represents that entire potential range.
+
+# The Cretaceous Reality: While 2800 mm is a massive amount of rain, 
+# it sits in the middle of the Y-axis. It was drier only compared to the absolute 
+# wettest rainforests on Earth today.
+
+########################################################################################
+# Tectonic Velocity: How fast did the Amazon travel on the South American plate?
+# Use Haversine formula to calculate distance between paleo-coordinates and modern
+# coordinates...then divide by 100 million years.
+########################################################################################
+
+import math
+
+def calculate_velocity(lat1, lon1, lat2, lon2, years):
+  # Radius of Earth in kilometers
+  R = 6371.0
+
+  # Convert degrees to radians
+  phi1, phi2 = math.radians(lat2), math.radians(lat2)
+  dphi = math.radians(lat2 - lat1)
+  dlambda = math.radians(lon2 - lon1)
+
+  # Haversine formula
+  a = math.sin(dphi / 2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2)**2
+  c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+  distance_km = R * c
+
+  # Convert to centimeters (1 km = 100,000 cm)
+  distance_cm = distance_km * 100000
+  velocity_cm_year = distance_cm / years
+
+  return distance_km, velocity_cm_year
+
+# Coordinates from results
+dist, speed = calculate_velocity(-3.0, -60.0, results['paleo_lat'], results['paleo_lon'], 100_000_000)
+
+print(f"--- Tectonic Velocity Report ---")
+print(f"Total Distance Traveled: {round(dist, 2)} km")
+print(f"Average Drift Speed: {round(speed, 2)} cm/yar")
