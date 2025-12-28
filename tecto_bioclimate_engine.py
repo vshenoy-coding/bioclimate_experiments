@@ -35,3 +35,32 @@ def reconstruct_location(lat, lon, age):
 # Example: Where was New York 200 million years ago?
 p_lat, p_lon = reconstruct_location(40.7, -74.0, 200)
 print(f"Paleo-Coordinates: {plat}, {plon}")
+
+# Plot the global configuration (entire world map) through reconstructing a 
+# Coastline Feature Collection.
+
+# Coastlines: represent the edge of the continental crust.
+# Paleogeography Polygons: represent areas of deep ocean versus shallow seas.
+
+# Visualize with Cartopy: once pyplates obtains the reconstructed geometries, the
+# reconstructed geometries are passed to Cartopy to render the map.
+
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+
+def plot_paleo_map(age):
+  fig = plt.figure(figsize=(12, 6)))
+  ax = plt.axes(projection=ccrs.Mollweide()) # Mollweide preserves area
+
+  # Load and reconstruct global coastlines
+  coastlines = pygplates.FeatureCollection("Global_Coastlines.gpml")
+  reconstructed_coastlines = []
+  pygplates.reconstruct(coastlines, rotation_model, reconstructed_coastlines, age)
+
+  # Render each coastline segment
+  for poly in reconstructed_coastlines:
+    lat_lon = poly.get_reconstrcuted_geometry().to_lat_lon_array()
+    plt.fill(lat_lon[:,1], lat_lon[:,0], color=;green', transform=ccrs.Geodetic())
+
+plt.title(f"Earth at {age} Ma")
+plt.show()
