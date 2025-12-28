@@ -86,7 +86,7 @@ import urllib3
 # Disable the insecure request warning since we are bypassing SSL verification
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-def get_modern_temp(lat, lon):
+def get_modern_climate(lat, lon):
     # Updated URL to the standard Open-Meteo Archive endpoint
     url = "https://archive-api.open-meteo.com/v1/archive"
     params = {
@@ -94,7 +94,7 @@ def get_modern_temp(lat, lon):
         "longitude": lon,
         "start_date": "2023-01-01",
         "end_date": "2023-12-31",
-        "daily": "temperature_2m_mean",
+        "daily": ["temperature_2m_mean", "precipitation_sum"],
         "timezone": "auto"
     }
 
@@ -103,18 +103,24 @@ def get_modern_temp(lat, lon):
     
     if response.status_code != 200:
         print(f"Weather API Error: {response.status_code}")
-        return 27.0 # Fallback to standard tropical temp if API fails
+        return 27.0, 2000.0 # Fallback to standard tropical temp and precip if API fails
         
     data = response.json()
+
+    # 1. Process Temperature
     temps = data['daily']['temperature_2m_mean']
-    
     # Filter out any None values (days with missing data)
     valid_temps = [t for t in temps if t is not None]
-    
-    if not valid_temps:
-        return 27.0
-        
-    return sum(valid_temps) / len(valid_temps)
+    avg_temp = sum(valid_temps) / len(valid_temps) if valid_temps else 27.0
+
+    # 2. Process Precipitation (sum of all daily values for the year)
+    precips = data['daily']['precipitation_sum']
+    valid_precips = [p for p in precips if p is not None]
+    total_precip = sum(valid_precips) if valid_precips else 1840.0
+
+    return round(avg_temp, 2), round(total_precip, 2)
+
+modern_temp, modern_precip = get_modern_climate(mod_lat, mod_lon)
 
 ##########################################################################################
 # Paleoclimate Modeling
@@ -195,8 +201,8 @@ results = climate_paleo_data(mod_lat, mod_lon, 100)
 
 print(f"--- Cretaceous Amazon Results ---")
 print(f"Paleo-latitude: {results['paleo_lat']}°S")
-print(f"Estimated Surface Temperature: {results['paleo_temp']}°C")
-print(f"Estimated Annual Rainfall: {results['paleo_precip']} mm")
+print(f"Estimated Surface Temperature: {round(results['paleo_temp'], 2)}°C")
+print(f"Estimated Annual Rainfall: {round(results['paleo_precip'], 2)} mm")
 
 
 
@@ -524,7 +530,10 @@ def get_habitability_report():
     lat, lon = loc.latitude, loc.longitude
     target_age = 100 # Mid-Cretaceous
 
-    # 2. Tectonic Reconstruction
+    # 2. Get Real Modern Climate (To avoid NameError in plotting/logic)
+    modern_temp, modern_precip = get_modern_climate(lat, lon)
+
+    # 3. Tectonic Reconstruction
     g_url = "https://gws.gplates.org/reconstruct/reconstruct_points/"
     g_params = {"points": f"{lon},{lat}", "time": target_age, "model": "MULLER2016"}
 
@@ -535,7 +544,7 @@ def get_habitability_report():
       print("Error connecting to GPlates server. Skipping tectonic check.")
       continue
 
-    # 3. Land Versus Water Thermal Gradient
+    # 4. Land Versus Water Thermal Gradient
     # Check if point was submerged to adjust the "Hothouse Delta"
     is_marine = False
     pg_url = "https://gws.gplates.org/utils/query_feature/"
@@ -549,7 +558,7 @@ def get_habitability_report():
       # Fallback: if API fails, assume land unless it's deep ocean today
       is_marine = False
 
-    # 4. Calculate paleo-temperature
+    # 5. Calculate paleo-temperature
     global_delta = 10.0 # 100Ma was ~10°C hotter globally
     amp = 1.0 - (0.5 *math.cos(math.radians(p_lat))) # Polar amplification
     local_delta = global_delta * amp
@@ -568,20 +577,63 @@ def get_habitability_report():
     modern_baseline = 15 + (12 * math.cos(math.radians(lat)))
     paleo_temp = round(modern_baseline + local_delta, 2)
 
-    # 5. Habitability Scoring
+    # 6. Paleobiology database (PBDB) querying actual fossil records.
+    # This turns the code from a predictive model to verifiable to actual data.
+    pbdb_url = "https://paleobiodb.org/data1.2/occs/list.json"
+    
+    # Using lngmin/latmin instead of latlng to resolve the 400 error
+    pbdb_params = {
+        "lngmin": lon - 0.5,
+        "lngmax": lon + 0.5,
+        "latmin": lat - 0.5,
+        "latmax": lat + 0.5,
+        "interval": "Cretaceous",
+        "show": "ident,class",
+        "limit": 10
+    }
+
+    fossil_list = []
+    try:
+        # verify=False handles the SSL issues encountered earlier
+        response = requests.get(pbdb_url, params=pbdb_params, verify=False, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json().get('records', [])
+            for r in data:
+                # In standard v1.2 (without 'vocab'), the keys are 'tna' and 'cll'
+                name = r.get('tna')
+                t_class = r.get('cll', 'Unknown')
+                if name and name not in fossil_list:
+                    fossil_list.append(f"{name} ({t_class})")
+            
+            fossil_list = fossil_list[:5]
+        else:
+            print(f"DEBUG: Status {response.status_code}, Response: {response.text}")
+            
+    except Exception as e:
+        fossil_list = [f"Connection error: {e}"]
+    
+    
+
+    # 6. Habitability Scoring
     # Human: optimal at 22°C. Drastic drop after 35°C (wet bulb/heat stroke limits).
     human_score = max(0, min(100, 100 - (abs(paleo_temp - 22) ** 1.5) * 2))
 
     # Dinosaur: optimal at 32°C. Large theropods handled heat better than cold.
     dino_score = max(0, min(100, 100 - (abs(paleo_temp - 32) ** 1.3) * 2))
 
-    # 6. Display Results
+    # 7. Display Results
     print(f"\n --- 100 Ma Report: {location_name.upper()} ---")
     print(f"Modern Coordinates:   {round(lat,2)}, {round(lon,2)}")
     print(f"Paleo-Coordinates:    {round(p_lat,2)},{round(p_lon,2)}")
     print(f"Paleo-Latitude:       {round(lat,2)}°")
     print(f"Above or Under Water: {env_label}")
     print(f"Paleo-temperature:    {paleo_temp}°C ({round(paleo_temp * 9/5 + 32, 1)}°F)")
+    print(f"\n --- Ground Truth (🐚 Fossils Found Nearby) ---")
+    if fossil_list:
+        for f in fossil_list: print(f" - {f}")
+    else:
+        print("No specific fossils recorded in this sector yet.")
     print(f"\n--- Habitability Indices ---")
     print(f"👤Human:                {round(human_score)}/100")
     print(f"🦖Dinosaur:             {round(dino_score)}/100")
