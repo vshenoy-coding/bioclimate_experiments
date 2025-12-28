@@ -14,6 +14,7 @@
 # Code offline-ready and doesn't need to rely on external geocoding service
 
 import math
+import numpy as np
 import matplotlib.pyplot as plt
 
 # Install Cartopy and its dependencies
@@ -25,93 +26,242 @@ import cartopy.crs as ccrs
 # !pip install geopy
 from geopy.geocoders import Nominatim
 
+from IPython.display import clear_output
+
+def get_granular_temp_offset(age_ma):
+    """
+    Interpolates climate offsets based on major thermal events.
+    Values represent the global anomaly relative to the modern baseline.
+    """
+    # Key anchor points (Age_Ma: Temp_Offset)
+    # Anchor points for interpolation (Age_Ma: Temp_Offset_Celsius)
+    # Includes high-resolution spikes for PETM and EECO
+    anchors = {
+        0: 0.0, 34: 0.5, 52: 12.0, 56: 15.0, 66: 8.0, 
+        92: 13.0, 145: 6.0, 201: 9.0, 252: 16.0, 300: -4.0, 360: 2.0,
+        444: -6.0, 520: 10.0, 800: -15.0
+    }
+    
+    ages = sorted(anchors.keys())
+    # Linear interpolation to find the specific offset for any age
+    return float(np.interp(age_ma, ages, [anchors[a] for a in ages]))
+
 def calculate_approx_paleo_position(location_name, age_ma, lat=None, lon=None):
 
-  # 1. Coordinate Handling
-  # Common city coordinates to bypass geocoder if needed
-  # Defines local database (always defined first before they're used 
-  # to avoid UnboundLocalError)
-  city_db = {
-      "New York, NY": (40.71, -74.01),
-      "London, UK": (51.51, -0.13),
-      "Syndney, AU": (-33.87, 151.21)
-  }
-  
-  
-  m_lat, m_lon = None, None
+    # 1. Coordinate Handling
+    # Common city coordinates to bypass geocoder if needed
+    # Defines local database (always defined first before they're used 
+    # to avoid UnboundLocalError)
+    city_db = {
+        "New York, NY": (40.71, -74.01),
+        "London, UK": (51.51, -0.13),
+        "Syndney, AU": (-33.87, 151.21),
+        "Lagos, NG": (6.45, 3.38),
+        "Buenos Aires, AR": (-34.60, -58.38)
+    }
 
-  # Priority A: User-provided manual coordinates
-  if lat is not None and lon is not None:
-    m_lat, m_lon = lat, lon
+    m_lat, m_lon = None, None
 
-  # Priority B: Try the Geocoder
-  if m_lat is None:
-    try:
-        # Use a unique user_agent to help avoid 403 errors
-        geolocator = Nominatim(user_agent="paleo_explorer_v2_unique")
-        loc = geolocator.geocode(location_name, timeout=5)
-        if loc:
-            m_lat, m_lon = loc.latitude, loc.longitude
-            print(f"📡 Geocoder successful for {location_name}")
-    except Exception as e:
+    # Priority A: User-provided manual coordinates
+    if lat is not None and lon is not None:
+        m_lat, m_lon = lat, lon
+
+    # Priority B: Try the Geocoder
+    if m_lat is None:
+        try:
+            # Use a unique user_agent to help avoid 403 errors
+            geolocator = Nominatim(user_agent="paleo_explorer_v2_unique")
+            loc = geolocator.geocode(location_name, timeout=5)
+            if loc:
+                m_lat, m_lon = loc.latitude, loc.longitude
+                print(f"📡 Geocoder successful for {location_name}")
+        except Exception as e:
             print(f"⚠️ Geocoder blocked or failed ({type(e).__name__}). Switching to Local DB...")
 
-  # Priority C: Local Database Fallback
+    # Priority C: Local Database Fallback
+    if m_lat is None:
+        if location_name in city_db:
+            m_lat, m_lon = city_db[location_name]
+            print(f"✅ Local database match found for {location_name}")
+        else:
+            print(f"❌ Error: Could not find coordinates for '{location_name}'.")
+            return None
 
-  if m_lat is None:
+    # 2. Mathematical Approximation of North American Plate Motion
+    # Historically, North America has drifted north/west since the Jurassic.
+    # Estimate a drift rate of ~0.2 degrees of latitude per million years.
+    # Dynamic Drift Rate Selection; default rates (North America)
+    lat_drift_rate = 0.18 # Degree North per Ma
+    lon_drift_rate = 0.35 # Degrees West per Ma
 
-    if location_name in city_db:
-        m_lat, m_lon = city_db[location_name]
-        print(f"✅ Local database match found for {location_name}")
+    # First attempt at dynamic adjustment based on modern coordinates.
+    if m_lat > 20 and -20 < m_lon < 50:
+        # Europe / Eurasia (moves slower north/east)
+        lat_drift_rate, lon_drift_rate = 0.12, -0.15
+        print("📍 Applying Eurasian plate drift rates.")
+
+    elif m_lat < 0 and 110 < m_lon < 155:
+        # Australia (fastest plate, moves rapidly north)
+        lat_drift_rate, lon_drift_rate = 0.65, -0.20
+        print("📍 Applying Australian plate drift rates.")
+
+    elif -60 < m_lat < 15 and -90 < m_lon < -30:
+        lat_drift_rate, lon_drift_rate = 0.10, 0.25  
+        print("📍 Applying South American plate drift rates.")
+    
+    elif -35 < m_lat < 38 and -20 < m_lon < 55:
+        lat_drift_rate, lon_drift_rate = 0.08, -0.05 # Africa
+        print("📍 Applying African plate drift rates.")
+
     else:
-        print(f"❌ Error: Could not find coordinates for '{location_name}'.")
-        return None
+        print("📍 Applying default (North American) plate drift rates.")
 
-  elif location_name in city_db:
-    m_lat, m_lon = city_db[location_name]
-  else:
-    # Fallback: manually provide coords if geocoder fails
-    print("⚠️ Geocoder failed or city not in DB and geocoder failed. Please provide lat/lon manually.")
-    return None
+    # 3. Physics calculations
+    p_lat = m_lat - (lat_drift_rate * age_ma)
+    p_lon = m_lon + (lon_drift_rate * age_ma)
+
+    # --- Supercontinent Convergence Logic ---
+    # 1. Pangea Window (Approx 180Ma to 350Ma)
+    if 180 < age_ma <= 450:
+        # Peaks at 250 Ma
+        pull_strength = math.sin(math.pi * (age_ma - 180) / 270) 
+        p_lat = p_lat * (1 - pull_strength) + (0 * pull_strength)
+        p_lon = p_lon * (1 - pull_strength) + (0 * pull_strength)
+
+    # 2. Rodinia Window (Approx 750Ma to 1000Ma)
+    elif 750 < age_ma <= 1000:
+        # Peaks at 850-900 Ma
+        # Strength of 'pull' toward the Rodinian center
+        pull_strength = math.sin(math.pi * (age_ma - 750) / 250)
+        p_lat = p_lat * (1 - pull_strength) + (0 * pull_strength)
+        p_lon = p_lon * (1 - pull_strength) + (0 * pull_strength)
   
+    # Based on Phanerozoic climate trends (Icehouse vs Hothouse)
+    temp_offset = get_granular_temp_offset(age_ma)
 
-  # 2. Mathematical Approximation of North American Plate Motion
-  # Historically, North America has drifted north/west since the Jurassic.
-  # Estimate a drift rate of ~0.2 degrees of latitude per million years.
-  lat_drift_rate = 0.18 # Degree North per Ma
-  lon_drift_rate = 0.35 # Degrees West per Ma
+    # 3. Temperature gradient calculation
+    # MAT = 28 * cos(lat) + Greenhouse Offset
+    paleo_mat = (28 * math.cos(math.radians(p_lat))) + temp_offset
 
-  p_lat = m_lat - (lat_drift_rate * age_ma)
-  p_lon = m_lon + (lon_drift_rate * age_ma)
+    # Haversine Distance (km)
+    R = 6371
+    dlat, dlon = math.radians(p_lat-m_lat), math.radians(p_lon-m_lon)
+    a = math.sin(dlat/2)**2 + math.cos(math.radians(m_lat)) * math.cos(math.radians(p_lat)) * math.sin(dlon/2)**2
+    dist_km = R * (2 * math.atan2(math.sqrt(a), math.sqrt(1-a)))
 
-  # 3. Temperature gradient calculation
-  # MAT = 28 * cos(lat) + Greenhouse Offset
-  warming_offset = 7.0 if 60 <= age_ma <= 150 else 0.0
-  paleo_mat = (28 * math.cos(math.radians(p_lat))) + warming_offset
+    return {
+        "modern": (round(m_lat, 2), round(m_lon, 2)),
+        "paleo": (round(p_lat, 2), round(p_lon, 2)),
+        "mat": round(paleo_mat, 2),
+        "offset": temp_offset,
+        "dist": round(dist_km, 0)
+    }
 
-  return {
-      "modern": (round(m_lat, 2), round(m_lon, 2)),
-      "paleo": (round(p_lat, 2), round(p_lon, 2)),
-      "temp": round(paleo_mat, 2)
-  }
-# --- Exeuction ---
-age = 150 # Jurassic
-res = calculate_approx_paleo_position("New York, NY", age)
+import ipywidgets as widgets
+from IPython.display import display, clear_output
 
-if res:
-    print(f"🌍 Mathematical Reconstruction (No Files Required)")
-    print(f"Modern: {res['modern']} -> Paleo: {res['paleo']}")
-    print(f"Estimated Jurassic Temperature: {res['temp']}°C")
+# Create persistent UI elements so that input box is not hidden by map
+city_input = widgets.Text(value='New York, NY', description='City:')
+age_input = widgets.FloatText(value=56.0, description='Age (Ma):')
+run_button = widgets.Button(description="Calculate Paleo-Position", button_style='primary')
+exit_button = widgets.Button(description="Exit Program", button_style='danger')
+output_area = widgets.Output()
 
-    # Visualization
-    fig = plt.figure(figsize=(10, 5))
-    ax = plt.axes(projection=ccrs.Mollweide())
-    ax.stock_img()
-    # res['paleo'][1] for longitude, res['paleo'][0] for latitude
-    ax.plot(res['paleo'][1], res['paleo'][0], 'r*', ms=15, transform=ccrs.Geodetic())
-    plt.title(f"Approximate Position at {age} Ma")
-    plt.show()
+def calculate_spherical_drift(m_lat, m_lon, age_ma):
+    # 1. The Wilson Cycle (Supercontinent Pulse)
+    # Continents cluster roughly every 450-500 million years.
+    cycle_period = 500 
+    oscillation = math.sin(2 * math.pi * age_ma / cycle_period)
+    
+    # 2. Rotational Drift
+    # Instead of linear drift, we treat motion as an angular shift
+    drift_scale = 0.25 # Degrees per Ma
+    
+    # Calculate paleo-lat/lon with a circular/oscillating component
+    p_lat = m_lat * math.cos(math.radians(drift_scale * age_ma)) + (20 * oscillation)
+    p_lon = m_lon + (drift_scale * age_ma * oscillation)
+    
+    # 3. Spherical Safety (Clamping)
+    p_lat = max(min(p_lat, 90), -90)
+    p_lon = ((p_lon + 180) % 360) - 180
+    
+    return p_lat, p_lon
 
+def on_button_clicked(b):
+    with output_area:
+        clear_output(wait=True) # Clears ONLY the map/results area
+        city_name = city_input.value
+        age_val = age_input.value
+
+        res = calculate_approx_paleo_position(city_name, age_val)
+
+        if res:
+            m_lat, m_lon = res['modern']
+            p_lat, p_lon = calculate_spherical_drift(m_lat, m_lon, age_val)
+
+            # Calculate "Paleo-Speed" (Velocity)
+            test_age = age_val - 1 if age_val >= 1 else age_val + 1
+            p_lat_next, p_lon_next = calculate_spherical_drift(m_lat, m_lon, test_age)
+            
+            # Use Haversine to find distance moved in 1 Million Years.
+            R = 6371 # Earth radius in km
+            dlat = math.radians(p_lat_next - p_lat)
+            dlon = math.radians(p_lon_next - p_lon)
+            a = math.sin(dlat/2)**2 + math.cos(math.radians(p_lat)) * math.cos(math.radians(p_lat_next)) * math.sin(dlon/2)**2
+            delta_dist_km = R * (2 * math.atan2(math.sqrt(a), math.sqrt(1-a)))
+            
+            # Convert km/Ma to cm/year (1 km/Ma = 0.1 cm/year).
+            speed_cm_yr = delta_dist_km * 0.1
+
+            print(f"✅ {city_name} at {age_val} Ma")
+            print(f"📊 Modern Location: {m_lat}°, {m_lon}°")
+            print(f"🌡️ MAT: {res['mat']}°C | 📏 Drift: {res['dist']} km")
+            
+            # --- Enhanced Geological Status ---
+            if age_val <= 60:
+                print("🏙️ Phase: Modern World Configuration")
+            elif 60 < age_val < 200:
+                print("🧩 Phase: Pangea Breakup (Atlantic Ocean Opening)")
+            elif 200 <= age_val <= 300:
+                print("🏔️ Phase: Pangea Assembly (Supercontinent Peak)")
+            elif 300 < age_val <= 541:
+                print("🌊 Phase: Paleozoic Drift (Pre-Pangea / Panthalassic Era)")
+            elif 541 < age_val <= 750:
+                print("🐟 Phase: Rodinia Breakup (Creating the Iapetus Ocean)")
+            elif 750 < age_val <= 900:
+                print("🧊 Phase: Rodinia Peak / Cryogenian 'Snowball Earth'")
+            else:
+                print("⏳ Phase: Deep Proterozoic / Pre-Rodinia")
+            
+            print(f"🧭 Paleo-Location: ({round(p_lat, 2)}, {round(p_lon, 2)})")
+            print(f"🚀 Paleo-Speed: {round(speed_cm_yr, 2)} cm/year")
+            print("-" * 30)
+            
+            # Render the Map
+            fig = plt.figure(figsize=(10, 5))
+            ax = plt.axes(projection=ccrs.Mollweide())
+            ax.stock_img()
+            ax.plot(p_lon, p_lat, 'r*', ms=15, transform=ccrs.Geodetic())
+            plt.title(f"{city_name} at {age_val} Ma")
+            plt.show()
+            plt.close(fig)
+        else:
+            print(f"❌ Error: Location '{city_name}' not found.")
+
+def on_exit_clicked(b):
+    city_input.close()
+    age_input.close()
+    run_button.close()
+    exit_button.close()
+    output_area.clear_output()
+    print("🌍 Explorer Closed. Re-run the cell to start again.")
+
+run_button.on_click(on_button_clicked)
+exit_button.on_click(on_exit_clicked)
+
+# 2. Display the dashboard
+print(" --- 🌍 Paleo-Location Explorer Dashboard ---")
+display(widgets.VBox([city_input, age_input, run_button, exit_button, output_area]))
 
 
 ########################################################################################
