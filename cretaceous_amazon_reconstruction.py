@@ -27,3 +27,23 @@ import chronos
 # At this time, the global climate was a 'Greenhouse' state.
 # We map these coordinates against paleoclimate model data (e.g., HadCM3)
 ##########################################################################################
+
+
+import requests
+
+def get_paleo_location(lat, lon, age):
+  # This calls the official GPlates engine directly
+  url = "https://gws.gplates.org/reconstruct/reconstruct_points/"
+  params = {
+  "points": f"{lon},{lat}",
+  "time": age,
+  "model": "MULLER2016"
+  }
+  data = requests.get(url, params=params).json()
+  return data['coordinates'][0][1], data['coordinates'][0][0]
+
+# 100 million years ago Amazon
+# call get_paleo_location function and pass it modern lat-lon points of Amazon
+paleo_lat, paleo_lon = get_paleo_location(-3.0, -60.0, 100)
+print(f"Paleo-Latitude: {paleo_lat}, Paleo-Longitude: {paleo_lon}")
+  
