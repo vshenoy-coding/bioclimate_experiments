@@ -640,7 +640,7 @@ def get_habitability_report():
 
     # 8. Biome override logic
     # Check if the fossils found suggest a marine environment
-    marine_classes = ['Bivalvia', 'Cephalopoda', 'Gastropoda', 'Chondrichthyes', Actinopterygii']
+    marine_classes = ['Bivalvia', 'Cephalopoda', 'Gastropoda', 'Chondrichthyes', 'Actinopterygii']
     found_marine = any(m_class in str(fossil_list) for m_class in marine_classes)
 
     if found_marine and not is_marine:
