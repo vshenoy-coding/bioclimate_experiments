@@ -181,6 +181,61 @@ plt.title("Bio-Climatic Shift: Rainfall Amount vs Seasonality")
 fig.tight_layout()
 plt.show()
 
+#########################################################################################
+# Identify the "Limiting Factor": the single month with the lowest rainfall for each point
+# If the driest month receives less than 60mm, that is considered a "dry" month for
+# tropical ecosystems.
+#########################################################################################
+
+transect_data_drylimit = []
+
+for loc in transect_locations:
+  url = url = f"https://archive-api.open-meteo.com/v1/archive?latitude={loc['lat']}&longitude={loc['lon']}&start_date=2023-01-01&end_date=2023-12-31&daily=precipitation_sum&timezone=UTC"
+  res = requests.get(url).json()
+
+  if 'daily' in res:
+    precip_values = res['daily']['precipitation_sum']
+
+  # Group daily data into 12 months (roughly 30 days each)
+  monthly_totals = [sum(precip_values[i:i+30]) for i in range(0, 360, 30)]
+
+  driest_month_value = min(monthly_totals)
+  annual_total = sum(precip_values)
+
+  transect_data_drylimit.append({
+    "Latitude": loc['lat'],
+    "Annual_Precip": annual_total,
+    "Driest_Month_mm": driest_month_value
+  })
+
+df_drylimit = pd.DataFrame(transect_data_drylimit)
+
+plt.figure(figsize=(12, 6))
+
+# Plot the driest month values
+plt.plot(df_drylimit['Latitude'], df_drylimit['Driest_Month_mm'], marker='s', color='orange', label='Driest Month Rainfall')
+
+# Add the biological threshold line (60mm)
+plt.axhline(y=60, color='red', linestyle='--', label='Rainforest Threshold (60mm)')
+
+plt.title("The 'Dry Season' Barrier Across the Transect")
+plt.xlabel("Latitude (Equator to South)")
+plt.ylabel("Precipitation (mm)")
+plt.legend()
+
+# For tropical ecosystems:
+# The Evergreen Zone: If the driest month stays above 60mm, 
+# the biome is likely an Evergreen Tropical Rainforest.
+
+# The Deciduous Zone: If it drops below 60mm for 1-3 months, 
+# you get Tropical Seasonal Forests.
+
+# The Savanna Zone: If the driest month hits 0mm and stays low for 5+ months, 
+# you are firmly in Savanna territory, regardless of how high the annual total was.
+
+# Calculate drought duration
+
+drought_analysis = []
 
 
 
