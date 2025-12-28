@@ -102,7 +102,7 @@ plt.subplots_adjust(wspace=0.1, hspace=0.3)
 plt.show()
 
 ###
-For loop adopted from the individual warming scenario code below:
+# For loop adopted from the individual warming scenario code below:
 #
 # Create a +2 degree warming scenario
 #warming_scenario = bio1_fake + 2.0
