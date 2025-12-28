@@ -613,16 +613,25 @@ def get_habitability_report():
     except Exception as e:
         fossil_list = [f"Connection error: {e}"]
     
-    
 
-    # 6. Habitability Scoring
+    # 6. Biome override logic
+    # Check if the fossils found suggest a marine environment
+    marine_classes = ['Bivalvia', 'Cephalopoda', 'Gastropoda', 'Chondrichthyes', 'Actinopterygii']
+    found_marine = any(m_class in str(fossil_list) for m_class in marine_classes)
+
+    if found_marine and not is_marine:
+      env_label = "🌊 Marine (Overriden by Fossil Evidence)"
+      # Adjust temperature slightly: water stays cooler than inland land
+      paleo_temp -= 3.0
+
+    # 7. Habitability Scoring
     # Human: optimal at 22°C. Drastic drop after 35°C (wet bulb/heat stroke limits).
     human_score = max(0, min(100, 100 - (abs(paleo_temp - 22) ** 1.5) * 2))
 
     # Dinosaur: optimal at 32°C. Large theropods handled heat better than cold.
     dino_score = max(0, min(100, 100 - (abs(paleo_temp - 32) ** 1.3) * 2))
 
-    # 7. Display Results
+    # 8. Display Results
     print(f"\n --- 100 Ma Report: {location_name.upper()} ---")
     print(f"Modern Coordinates:   {round(lat,2)}, {round(lon,2)}")
     print(f"Paleo-Coordinates:    {round(p_lat,2)},{round(p_lon,2)}")
@@ -637,16 +646,6 @@ def get_habitability_report():
     print(f"\n--- Habitability Indices ---")
     print(f"👤Human:                {round(human_score)}/100")
     print(f"🦖Dinosaur:             {round(dino_score)}/100")
-
-    # 8. Biome override logic
-    # Check if the fossils found suggest a marine environment
-    marine_classes = ['Bivalvia', 'Cephalopoda', 'Gastropoda', 'Chondrichthyes', 'Actinopterygii']
-    found_marine = any(m_class in str(fossil_list) for m_class in marine_classes)
-
-    if found_marine and not is_marine:
-      env_label = "🌊 Marine (Overriden by Fossil Evidence)"
-      # Adjust temperature slightly: water stays cooler than inland land
-      paleo_temp -= 3.0
 
 get_habitability_report()
                             
