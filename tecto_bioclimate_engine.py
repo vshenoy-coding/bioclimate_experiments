@@ -5,7 +5,13 @@
 # No .rot or .gpm files needed
 # Kinematic plate equations used to approximate drift of the 
 # North American plate (where New York sits) using a linear regression of its historical
-# motion
+# motion.
+
+# This is a straight line apprxoaimtion. The real GPlates files use Euler Poles, where
+# every lectonic plate rotates around a unique "hinge". Using Euler Poles, a location that
+# a plate is on doesn't just move north/south/east/west, it also rotates as it moves.
+
+# Code offline-ready and doesn't need to rely on external geocoding service
 
 import math
 import matplotlib.pyplot as plt
@@ -19,14 +25,92 @@ import cartopy.crs as ccrs
 # !pip install geopy
 from geopy.geocoders import Nominatim
 
-def calculate_approx_paleo_position(location_name, age_ma):
-  # 1. Get Modern Coordinates
-  geolocator = Nominatim(user_agent="paleo_approx_model")
-  loc = geolocator.geocode(location_name)
-  if not loc: return None
+def calculate_approx_paleo_position(location_name, age_ma, lat=None, lon=None):
 
-  m_lat, m_lon = loc.latitude, loc.longitude
+  # 1. Coordinate Handling
+  # Common city coordinates to bypass geocoder if needed
+  # Defines local database (always defined first before they're used 
+  # to avoid UnboundLocalError)
+  city_db = {
+      "New York, NY": (40.71, -74.01),
+      "London, UK": (51.51, -0.13),
+      "Syndney, AU": (-33.87, 151.21)
+  }
+  
+  
+  m_lat, m_lon = None, None
 
+  # Priority A: User-provided manual coordinates
+  if lat is not None and lon is not None:
+    m_lat, m_lon = lat, lon
+
+  # Priority B: Try the Geocoder
+  if m_lat is None:
+    try:
+        # Use a unique user_agent to help avoid 403 errors
+        geolocator = Nominatim(user_agent="paleo_explorer_v2_unique")
+        loc = geolocator.geocode(location_name, timeout=5)
+        if loc:
+            m_lat, m_lon = loc.latitude, loc.longitude
+            print(f"📡 Geocoder successful for {location_name}")
+    except Exception as e:
+            print(f"⚠️ Geocoder blocked or failed ({type(e).__name__}). Switching to Local DB...")
+
+  # Priority C: Local Database Fallback
+
+  if m_lat is None:
+
+    if location_name in city_db:
+        m_lat, m_lon = city_db[location_name]
+        print(f"✅ Local database match found for {location_name}")
+    else:
+        print(f"❌ Error: Could not find coordinates for '{location_name}'.")
+        return None
+
+  elif location_name in city_db:
+    m_lat, m_lon = city_db[location_name]
+  else:
+    # Fallback: manually provide coords if geocoder fails
+    print("⚠️ Geocoder failed or city not in DB and geocoder failed. Please provide lat/lon manually.")
+    return None
+  
+
+  # 2. Mathematical Approximation of North American Plate Motion
+  # Historically, North America has drifted north/west since the Jurassic.
+  # Estimate a drift rate of ~0.2 degrees of latitude per million years.
+  lat_drift_rate = 0.18 # Degree North per Ma
+  lon_drift_rate = 0.35 # Degrees West per Ma
+
+  p_lat = m_lat - (lat_drift_rate * age_ma)
+  p_lon = m_lon + (lon_drift_rate * age_ma)
+
+  # 3. Temperature gradient calculation
+  # MAT = 28 * cos(lat) + Greenhouse Offset
+  warming_offset = 7.0 if 60 <= age_ma <= 150 else 0.0
+  paleo_mat = (28 * math.cos(math.radians(p_lat))) + warming_offset
+
+  return {
+      "modern": (round(m_lat, 2), round(m_lon, 2)),
+      "paleo": (round(p_lat, 2), round(p_lon, 2)),
+      "temp": round(paleo_mat, 2)
+  }
+# --- Exeuction ---
+age = 150 # Jurassic
+res = calculate_approx_paleo_position("New York, NY", age)
+
+if res:
+    print(f"🌍 Mathematical Reconstruction (No Files Required)")
+    print(f"Modern: {res['modern']} -> Paleo: {res['paleo']}")
+    print(f"Estimated Jurassic Temperature: {res['temp']}°C")
+
+    # Visualization
+    fig = plt.figure(figsize=(10, 5))
+    ax = plt.axes(projection=ccrs.Mollweide())
+    ax.stock_img()
+    # res['paleo'][1] for longitude, res['paleo'][0] for latitude
+    ax.plot(res['paleo'][1], res['paleo'][0], 'r*', ms=15, transform=ccrs.Geodetic())
+    plt.title(f"Approximate Position at {age} Ma")
+    plt.show()
 
 
 
