@@ -237,5 +237,73 @@ plt.legend()
 
 drought_analysis = []
 
+for loc in transect_locations:
+    url = f"https://archive-api.open-meteo.com/v1/archive?latitude={loc['lat']}&longitude={loc['lon']}&start_date=2023-01-01&end_date=2023-12-31&daily=precipitation_sum&timezone=UTC"
+    res = requests.get(url).json()
 
+    if 'daily' in res:
+        precip_values = res['daily']['precipitation_sum']
+        
+        # Create 12 monthly totals
+        monthly_totals = [sum(precip_values[i:i+30]) for i in range(0, 360, 30)]
+        
+        # Count months where precipitation is less than 60mm
+        dry_months_count = sum(1 for month in monthly_totals if month < 60)
+
+        drought_analysis.append({
+            "Latitude": loc['lat'], 
+            "Dry_Months": dry_months_count
+        })
+
+df_drought = pd.DataFrame(drought_analysis)
+
+# Visualize how many months of "biological stress" the vegetation faces as you move south
+
+plt.figure(figsize=(10, 6))
+plt.bar(df_drought['Latitude'].astype(str), df_drought['Dry_Months'], color='peru')
+
+plt.title("Number of Dry Months (< 60mm) Along the Transect")
+plt.xlabel("Latitude")
+plt.ylabel("Count of Dry Months")
+plt.xticks(
+  ticks = range(len(df_drought)),
+  labels=[f"{round(float(lat), 2)}" for lat in df_drought['Latitude']],
+  rotation=45)
+
+plt.grid(axis='y', linestyle='--', alpha=0.7)
+plt.show()
+  
+#########################################################################################
+# Mapping the Predictions: Put the points on a map
+#########################################################################################
+
+import folium
+
+# 1. Setup the Map centered on your transect
+m = folium.Map(location=[-9, 60], zoom_start=5, tiles='Stamen Terrain')
+
+# 2. Add points with colors based on Dry Month count
+for index, row in df_drought.iterrows():
+  # Define colors
+  if row['Dry_Months'] <= 3:
+    color = 'darkgreen' # Rainforest
+    label = "Evergreen Rainforest"
+  elif 4 <= row['Dry_Months'] <= 6:
+    color = 'orange'    # Deciduous
+    label = "Tropical Deciduous Forest"
+  else: 
+    color = 'red'       # Savanna
+    label = "Savanna / Shrubland"
+
+folium.CircleMarker(
+  location[row['Latitude'], -60], # Using the constant longitude from your transect
+  radius=8,
+  popup=f"Lat: {round(row['Latitude'], 2)}<br>Dry Months: {row['Dry_Months']}<br>Predicted: {label}",
+  color=color,
+  fill=True,
+  fill_opacity=0.7
+).add_to(m)
+
+m
+  
 
