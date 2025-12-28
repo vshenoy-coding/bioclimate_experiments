@@ -392,7 +392,200 @@ final_results = climate_paleo_data_v3(mod_lat, mod_lon, 100)
 print(f"Global GMT at 100Ma: {final_results['global_mean_temp']}°C")
 print(f"{place} local temp at 100Ma: {final_results['local_temp']}°C")
 
+########################################################################################
+# Check if the paleo-cordinate was under water or dry land by integrating a check against 
+# the Paleo-DEM (Digital Elevation Model)
+########################################################################################
+
+# Use the MAcrostat API or simplified elevation lookup 
+# Create a function that queries the GPlates/Macrostrat ecosystem to determine the
+# Paleo-Lithology" or elevation for that speicifc tectonic plate at that time.
+
+def check_paleo_elevation(lat, lon, age):
+
+  # Checks if the reconstructed coordinates were above or below sea level.
+  # Uses a simplified logic based on Mid-Cretaceous eustatic sea-level rise.
+
+  # 1. Standard GPlates Reconstruction to get Paleo-latitude/Paleo-longitude
+
+  url = "https://gws.gplates.org/reconstruct/reconstruct_points/"
+  params = {"points": f"{lon},{lat}", "time": age, "model": "MULLER2016"}
+
+  try:
+      data = requests.get(url, params=params, verify=False).json()
+      p_lon, p_lat = data['coordinates'][0]
+
+      # 2. Query Macrostat/GPlates for Paleogeography
+      # We check if the point falls within a 'marine' or 'terrestrial' polygon
+      pg_url = "https://gws.gplates.org/utils/query_feature/"
+      pg_params = {
+      "lng": p_lon,
+      "lat": p_lat,
+      "time": age,
+      "model": "MULLER2016",
+      "layer": "paleogeography" # Specific GPlates layer for land/sea masks
+      }
+
+      pg_response = requests.get(pg_url, params=pg_params, verify=False).json()
+
+      # Logic: If no feature is returned, it's often deep ocean.
+      # If a feature is reutrned, we check the 'environment' attribute.
+      if not pg_response or 'features' not in pg_response:
+        return "Deep Marine", -2000 # Likely Oceanic Crust
+
+      env = pg_response['features'][0]['properties'].get('environment', 'Unknown')
+
+      # Mid-Cretaceous adjustment
+      # Even if 'Land', many low-lying areas were flooded (Cretaceous Transgression)
+      is_submerged = "Marine" in env or "Sea" in env
+
+      return env, p_lat, p_lon
+
+  except Exception as e:
+      return f"Lookup Error: {e}", None, None
+
+# --- Integrated Execution ---
+env_type, p_late, p_lon = check_paleo_elevation(mod_lat, mod_lon, 100)
+
+print(f"--- Paleogeography Report (100 Ma) ---")
+print(f"Coordinate Environment: {env_type}")
+
+if "Marine" in env_type:
+    print("⚠️  NOTICE: This location was likely SUBMERGED under an inland sea.")
+    print("The 'Rainforest' results would actually represent a Marine/Coastal biome.")
+else:
+    print("✅ LANDMASS: This location was above sea level (Terrestrial).")
+
+##########################################################################################
+# Querying specific polygons can be patchy in deep-time databases, so the eustatic sea 
+# level adjustment can be used instead.
+##########################################################################################
+
+def check_submersion_risk(mod_lat, mod_lon, age):
+    # 1. Get Modern Elevation using a simple open elevation API
+    elev_url = f"https://api.open-elevation.com/api/v1/lookup?locations={mod_lat},{mod_lon}"
+    try:
+        elev_data = requests.get(elev_url).json()
+        modern_elev = elev_data['results'][0]['elevation']
+    except:
+        modern_elev = 50 # Default for low-lying Amazon basin
+
+    # 2. Define Cretaceous Sea Level Rise (Eustatic)
+    # The Mid-Cretaceous was the "high-water mark" of the Phanerozoic
+    cretaceous_sea_level_rise = 170 # meters above modern
+
+    # 3. Simple Isostatic/Tectonic Estimate
+    # The Amazon has subsided significantly due to sediment loading
+    # We apply a "Deep Time" adjustment factor
+    paleo_elev_estimate = modern_elev - cretaceous_sea_level_rise
+
+    status = "TERRESTRIAL" if paleo_elev_estimate > 0 else "SUBMERGED (Epicontinental Sea)"
+    
+    return {
+        "modern_elevation": modern_elev,
+        "paleo_elevation_est": paleo_elev_estimate,
+        "status": status
+    }
+
+elevation_report = check_submersion_risk(mod_lat, mod_lon, 100)
+print(f"--- Elevation Analysis ---")
+print(f"Modern Elevation: {elevation_report['modern_elevation']}m")
+print(f"Cretaceous Relative Elevation: {elevation_report['paleo_elevation_est']}m")
+print(f"Result: {elevation_report['status']}")
+
 
 ########################################################################################
-# Previously hard-coded
+# Deep Time Explorer: user input prompt, Habitability Index comparing human heat 
+# tolerance against a theropod's biology.
 ########################################################################################
+
+def get_habitability_report():
+  geolocator = Nominatim(user_agent="paleo_explorer_v4")
+
+  while True:
+    print("\n" + "="*40)
+    location_name = input("Enter a location (or 'q' to exit): ").strip()
+
+
+    if location_name.lower() == 'q':
+      print("Exiting program.")
+      break
+
+    # 1. Validate Location
+    try:
+        loc = geolocator.geocode(location_name)
+        if not loc:
+          print("f❌ '{location_name}' not recognized. Please try a city, country, or landmark.")
+          continue
+    except Exception as e:
+        print(f"Connection error: {e}. Please try again.")
+        continue
+
+    lat, lon = loc.latitude, loc.longitude
+    target_age = 100 # Mid-Cretaceous
+
+    # 2. Tectonic Reconstruction
+    g_url = "https://gws.gplates.org/reconstruct/reconstruct_points/"
+    g_params = {"points": f"{lon},{lat}", "time": target_age, "model": "MULLER2016"}
+
+    try:
+      g_data = requests.get(g_url, params=g_params).json()
+      p_lon, p_lat = g_data['coordinates'][0]
+    except:
+      print("Error connecting to GPlates server. Skipping tectonic check.")
+      continue
+
+    # 3. Land Versus Water Thermal Gradient
+    # Check if point was submerged to adjust the "Hothouse Delta"
+    is_marine = False
+    pg_url = "https://gws.gplates.org/utils/query_feature/"
+    pg_params = {"lng": p_lon, "lat": p_lat, "time": target_age, "model": "MULLER2016"}
+
+    try:
+      pg_res = requests.get(pg_url, params=pg_params, timeout=5).json()
+      if pg_res['features'] and "Marine" in pg_res['features'][0]['properties'].get('environment', ''):
+        is_marine = True
+    except:
+      # Fallback: if API fails, assume land unless it's deep ocean today
+      is_marine = False
+
+    # 4. Calculate paleo-temperature
+    global_delta = 10.0 # 100Ma was ~10°C hotter globally
+    amp = 1.0 - (0.5 *math.cos(math.radians(p_lat))) # Polar amplification
+    local_delta = global_delta * amp
+
+    # Water versus land adjustment:
+    # oceans have higher heat capacity and therefore higher thermal inertia than land;
+    # land heats up much more in a Hothouse climate
+
+    if is_marine:
+      local_delta *= 0.65 # Marine cooling/damping effect
+      env_label = "🌊 Marine/Coastal"
+    else:
+      local_delta *= 1.2  # Continental heating effect
+      env_label = "🌋 Terrestrial/Inland"
+
+    modern_baseline = 15 + (12 * math.cos(math.radians(lat)))
+    paleo_temp = round(modern_baseline + local_delta, 2)
+
+    # 5. Habitability Scoring
+    # Human: optimal at 22°C. Drastic drop after 35°C (wet bulb/heat stroke limits).
+    human_score = max(0, min(100, 100 - (abs(paleo_temp - 22) ** 1.5) * 2))
+
+    # Dinosaur: optimal at 32°C. Large theropods handled heat better than cold.
+    dino_score = max(0, min(100, 100 - (abs(paleo_temp - 32) ** 1.3) * 2))
+
+    # 6. Display Results
+    print(f"\n --- 100 Ma Report: {location_name.upper()} ---")
+    print(f"Modern Coordinates:   {round(lat,2)}, {round(lon,2)}")
+    print(f"Paleo-Coordinates:    {round(p_lat,2)},{round(p_lon,2)}")
+    print(f"Paleo-Latitude:       {round(lat,2)}°")
+    print(f"Above or Under Water: {env_label}")
+    print(f"Paleo-temperature:    {paleo_temp}°C ({round(paleo_temp * 9/5 + 32, 1)}°F)")
+    print(f"\n--- Habitability Indices ---")
+    print(f"👤Human:                {round(human_score)}/100")
+    print(f"🦖Dinosaur:             {round(dino_score)}/100")
+
+get_habitability_report()
+                            
+
