@@ -131,4 +131,56 @@ plt.show()
 
 
 
+#########################################################################################
+# Define a longer transect: From Equator (Rainforest) to Subtropics (Savanna/Shrub)
+# from Amazon equator down into the seasonal Chaco/Cerrado
+#########################################################################################
+lats = np.linspace(0, -20, 10) 
+lons = np.linspace(-60, -60, 10) # Staying on the same longitude line
+
+transect_data = []
+
+for i in range(len(lats)):
+    url = f"https://archive-api.open-meteo.com/v1/archive?latitude={lats[i]}&longitude={lons[i]}&start_date=2023-01-01&end_date=2023-12-31&daily=precipitation_sum&timezone=UTC"
+    res = requests.get(url).json()
+    
+    if 'daily' in res:
+        precip_values = res['daily']['precipitation_sum']
+        total_p = sum(precip_values)
+        
+        # Calculate Seasonality (Coefficient of Variation)
+        # Higher values = more extreme dry/wet seasons
+        monthly_precip = [sum(precip_values[j:j+30]) for j in range(0, 360, 30)]
+        std_dev = np.std(monthly_precip)
+        mean_p = np.mean(monthly_precip)
+        seasonality = (std_dev / mean_p) * 100 if mean_p > 0 else 0
+        
+        transect_data.append({
+            "Latitude": lats[i], 
+            "Total_Precip": total_p, 
+            "Seasonality_Index": seasonality
+        })
+
+df_gradient = pd.DataFrame(transect_data)
+
+fig, ax1 = plt.subplots(figsize=(12, 6))
+
+# Plot Total Precipitation
+ax1.set_xlabel('Latitude (Moving away from Equator)')
+ax1.set_ylabel('Annual Precipitation (mm)', color='tab:blue')
+ax1.plot(df_gradient['Latitude'], df_gradient['Total_Precip'], color='tab:blue', marker='o', linewidth=3, label='Total Rain')
+ax1.tick_params(axis='y', labelcolor='tab:blue')
+
+# Create a second y-axis for Seasonality
+ax2 = ax1.twinx()
+ax2.set_ylabel('Seasonality Index (Higher = More Seasonal)', color='tab:red')
+ax2.plot(df_gradient['Latitude'], df_gradient['Seasonality_Index'], color='tab:red', marker='s', linestyle='--', label='Seasonality')
+ax2.tick_params(axis='y', labelcolor='tab:red')
+
+plt.title("Bio-Climatic Shift: Rainfall Amount vs Seasonality")
+fig.tight_layout()
+plt.show()
+
+
+
 
