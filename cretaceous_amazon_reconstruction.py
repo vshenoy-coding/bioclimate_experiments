@@ -28,35 +28,125 @@ import chronos
 # We map these coordinates against paleoclimate model data (e.g., HadCM3)
 ##########################################################################################
 
+# We want to fetch modern lat, lon coordinates without hardcoding them
+
+# !pip install geopy
 
 import requests
+from geopy.geocoders import Nominatim
 
-def get_paleo_location(lat, lon, age):
-  # This calls the official GPlates engine directly
+def get_coordinates(location_name):
+  # Fetches modern lat/lon for a given string location.
+  geolocator = Nominatim(user_agent="paleo_explorer")
+  location = geolocator.geocode(location_name)
+  if location:
+    return location.latitude, location.longitude
+  else:
+    return None, None
+    
+
+def get_paleo_location(location_name, age):
+  # 1. Dynamically get modern points
+  lat, lon = get_coordinates(location_name)
+
+  if lat is None:
+    return f"Location '{location_name}' not found."
+  
+  # 2. call the official GPlates engine directly
   url = "https://gws.gplates.org/reconstruct/reconstruct_points/"
   params = {
-  "points": f"{lon},{lat}",
-  "time": age,
-  "model": "MULLER2016"
+    "points": f"{lon},{lat}",
+    "time": age,
+    "model": "MULLER2016"
   }
+  
   data = requests.get(url, params=params).json()
-  return data['coordinates'][0][1], data['coordinates'][0][0]
+  p_lon, p_lat = data['coordinates'][0]
+  
 
-# 100 million years ago Amazon
-# call get_paleo_location function and pass it modern lat-lon points of Amazon
+  # 100 million years ago Amazon
+  # call get_paleo_location function and pass it modern lat-lon points of Amazon
 
-p_lat, p_lon = get_paleo_location(-3.0, -60.0, 100)
-print(f"Paleo-Latitude: {p_lat}, Paleo-Longitude: {p_lon}")
+  return p_lat, p_lon, lat, lon
 
+# --- Execution ---
+place = "Amazon Rainforest"
+paleo_lat, paleo_lon, mod_lat, mod_lon = get_paleo_location(place, 100)
+
+print(f"Location: {place}")
+print(f"Modern Coordinates: {mod_lat}, {mod_lon}")
+print(f"Paleo-Latitude (100Ma): {paleo_lat}")
+print(f"Paleo-Longitude (100Ma): {paleo_lon}")
+
+##########################################################################################
+# Get temperatures at modern lat, lon
+##########################################################################################
+
+import urllib3
+# Disable the insecure request warning since we are bypassing SSL verification
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+def get_modern_temp(lat, lon):
+    # Updated URL to the standard Open-Meteo Archive endpoint
+    url = "https://archive-api.open-meteo.com/v1/archive"
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "start_date": "2023-01-01",
+        "end_date": "2023-12-31",
+        "daily": "temperature_2m_mean",
+        "timezone": "auto"
+    }
+
+    # Added verify=False to ignore the SSL UNRECOGNIZED_NAME error
+    response = requests.get(url, params=params, verify=False)
+    
+    if response.status_code != 200:
+        print(f"Weather API Error: {response.status_code}")
+        return 27.0 # Fallback to standard tropical temp if API fails
+        
+    data = response.json()
+    temps = data['daily']['temperature_2m_mean']
+    
+    # Filter out any None values (days with missing data)
+    valid_temps = [t for t in temps if t is not None]
+    
+    if not valid_temps:
+        return 27.0
+        
+    return sum(valid_temps) / len(valid_temps)
 
 ##########################################################################################
 # Paleoclimate Modeling
 ##########################################################################################
 
+# Calculate Baron (1994) Greenhouse Gradient, estimating temperature difference based
+# on how far a point is from the equator (p_lat)
+
+def get_greenhouse_delta(paleo_lat):
+
+  # Calculates the temperature increase relative to modern
+  # latitudinal averages during the Mid-Cretaceous.
+
+  abs_lat = abs(paleo_lat)
+
+  # Near the Equator (0-15°): Cretaceous was ~4-6°C hotter
+  # Near the Poles (70-90°): Cretaceous was ~20-30°C hotter
+  # This formula approximates that curve:
+  delta = 5 + (0.3 *abs_lat)
+
+  return round(delta, 2)
+
+
+
 # Combine teconic rotation with a climate estimate based on published Cretaceous model data
 
 def climate_paleo_data(lat, lon, age):
-  # 1. Rotate the point to find its  ancient latitude
+
+  # 1. calculate the real modern average instead of hardcoding 27
+  real_modern_avg = get_modern_temp(lat, lon)
+  
+  # 2. Rotate the point to find its ancient paleo-coordinates
   gplates_url = "https://gws.gplates.org/reconstruct/reconstruct_points/"
   g_params = {"points": f"{lon},{lat}", "time": age, "model": "MULLER2016"}
   
@@ -77,23 +167,31 @@ def climate_paleo_data(lat, lon, age):
 
   # Near the equator during the Cretaceous,
   # temperatures were 5-7°C hotter than modern equatorial temps.
+  # modern_equatorial_avg = 27
 
-  modern_equatorial_avg = 27
-  est_cretaceous_temp = modern_equatorial_avg + 6 # Result: 33°C
-
+  # Dynamic Calculation: No more hard-coded 6
+  temp_delta = get_greenhouse_delta(p_lat)
+  est_cretaceous_temp = real_modern_avg + temp_delta 
+  
   # Estimate Precipitation
   # The widening Atlantic 'gateway' created high humidity
-  est_cretaceous_precip = 2800
+  # Precipitation also scales with temperature (Clausius-Clapeyron relation)
+  # Roughly 7% increase in moisture per 1°C of warming
+
+  precip_factor = 1 + (temp_delta * 0.07)
+  est_cretaceous_precip = 1834 * precip_factor # (Precipitation moderling requies complex GCMs)
 
   return {
     "paleo_lat": round(p_lat, 2),
     "paleo_lon": round(p_lon, 2),
+    "delta_applied": temp_delta,
+    "modern_temp": round(est_cretaceous_temp, 2),
     "paleo_temp": est_cretaceous_temp,
     "paleo_precip": est_cretaceous_precip
   }
 
 # Run for the Amazon
-results = climate_paleo_data(-3.0, -60.0, 100)
+results = climate_paleo_data(mod_lat, mod_lon, 100)
 
 print(f"--- Cretaceous Amazon Results ---")
 print(f"Paleo-latitude: {results['paleo_lat']}°S")
@@ -110,8 +208,8 @@ import numpy as np
 
 #1. Modern Data (From earlier 2023 analysis)
 # Assuming an average of transect points
-modern_temp = 27
-modern_precip = 1834
+# modern_temp = 27
+# modern_precip = 1834
 
 # 2. Cretaceous Data (Based on -8.26 Paleo-Latitude)
 paleo_temp = results['paleo_temp']
@@ -198,7 +296,7 @@ def calculate_velocity(lat1, lon1, lat2, lon2, years):
   R = 6371.0
 
   # Convert degrees to radians
-  phi1, phi2 = math.radians(lat2), math.radians(lat2)
+  phi1, phi2 = math.radians(lat1), math.radians(lat2)
   dphi = math.radians(lat2 - lat1)
   dlambda = math.radians(lon2 - lon1)
 
@@ -214,8 +312,15 @@ def calculate_velocity(lat1, lon1, lat2, lon2, years):
   return distance_km, velocity_cm_year
 
 # Coordinates from results
-dist, speed = calculate_velocity(-3.0, -60.0, results['paleo_lat'], results['paleo_lon'], 100_000_000)
+dist, speed = calculate_velocity(mod_lat, mod_lon, results['paleo_lat'], results['paleo_lon'], 100_000_000)
 
 print(f"--- Tectonic Velocity Report ---")
 print(f"Total Distance Traveled: {round(dist, 2)} km")
-print(f"Average Drift Speed: {round(speed, 2)} cm/yar")
+print(f"Average Drift Speed: {round(speed, 2)} cm/year")
+
+
+########################################################################################
+# Previously hard-coded
+########################################################################################
+
+
