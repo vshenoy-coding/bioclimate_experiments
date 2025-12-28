@@ -517,79 +517,74 @@ def get_habitability_report():
       print("Exiting program.")
       break
 
-    # 1. Validate Location
+    # 1. Validate Location & Get Coordinates
     try:
         loc = geolocator.geocode(location_name)
         if not loc:
           print("f❌ '{location_name}' not recognized. Please try a city, country, or landmark.")
           continue
+        lat, lon = loc.latitude, loc.longitude
     except Exception as e:
         print(f"Connection error: {e}. Please try again.")
         continue
 
-    lat, lon = loc.latitude, loc.longitude
+
     target_age = 100 # Mid-Cretaceous
 
     # 2. Get Real Modern Climate (To avoid NameError in plotting/logic)
     modern_temp, modern_precip = get_modern_climate(lat, lon)
 
-    # 3. Tectonic Reconstruction
-    g_url = "https://gws.gplates.org/reconstruct/reconstruct_points/"
-    g_params = {"points": f"{lon},{lat}", "time": target_age, "model": "MULLER2016"}
+    # 3. Get Modern Elevation (defined once, dynamic Input for bathymetry and biome)
+    try:
+        elev_url = f"https://api.open-elevation.com/api/v1/lookup?locations={lat},{lon}"
+        elev_res = requests.get(elev_url, timeout=3).json()
+        modern_elevation = elev_res['results'][0]['elevation']
+    except:
+        modern_elevation = 0 # Default average
+
+    # 4. Tectonic Reconstruction
 
     try:
-      g_data = requests.get(g_url, params=g_params).json()
-      p_lon, p_lat = g_data['coordinates'][0]
+        g_url = "https://gws.gplates.org/reconstruct/reconstruct_points/"
+        g_params = {"points": f"{lon},{lat}", "time": target_age, "model": "MULLER2016"}
+        g_data = requests.get(g_url, params=g_params).json()
+        p_lon, p_lat = g_data['coordinates'][0]
     except:
-      print("Error connecting to GPlates server. Skipping tectonic check.")
-      continue
+        print("Error connecting to GPlates server. Skipping tectonic check.")
+        continue
 
-    # 4. Land Versus Water Thermal Gradient
+    # 5. Dynamic Global Bathymetry Calculation
+    # Eustatic rise + thermal expansion (warm water expands)
+    eustatic_rise = 250
+    thermal_expansion = 15 * (1.0 - (abs(p_lat) / 90))
+
+    # Loading factor: Low-lying basins (like the Gulf) sink more under water weight
+    loading_factor = 1.33 if modern_elevation < 150 else 1.0
+
+    # Net paleo-Depth (if > 0, the location is submerged)
+    net_depth = (eustatic_rise + thermal_expansion) - (modern_elevation * loading_factor)
+    is_submerged = net_depth > 0
+  
+    # 6. Calculate paleo-temperature
     # Check if point was submerged to adjust the "Hothouse Delta"
-    is_marine = False
-    pg_url = "https://gws.gplates.org/utils/query_feature/"
-    pg_params = {"lng": p_lon, "lat": p_lat, "time": target_age, "model": "MULLER2016"}
+    
+    global_delta = 10.0
+    amplitude = 1.0 - (0.5 *math.cos(math.radians(p_lat)))
+    local_delta = global_delta * amplitude
 
-    try:
-      pg_res = requests.get(pg_url, params=pg_params, timeout=5).json()
-      if pg_res['features'] and "Marine" in pg_res['features'][0]['properties'].get('environment', ''):
-        is_marine = True
-    except:
-      # Fallback: if API fails, assume land unless it's deep ocean today
-      is_marine = False
-
-    # 5. Calculate paleo-temperature
-    global_delta = 10.0 # 100Ma was ~10°C hotter globally
-    amp = 1.0 - (0.5 *math.cos(math.radians(p_lat))) # Polar amplification
-    local_delta = global_delta * amp
-
-    # Water versus land adjustment:
-    # oceans have higher heat capacity and therefore higher thermal inertia than land;
-    # land heats up much more in a Hothouse climate
-
-    if is_marine:
-      local_delta *= 0.65 # Marine cooling/damping effect
-      env_label = "🌊 Marine/Coastal"
-    else:
-      local_delta *= 1.2  # Continental heating effect
-      env_label = "🌋 Terrestrial/Inland"
-
+    # Apply cooling if submerged, heating if land
+    local_delta *= 0.65 if is_submerged else 1.2
     modern_baseline = 15 + (12 * math.cos(math.radians(lat)))
     paleo_temp = round(modern_baseline + local_delta, 2)
 
-    # 6. Paleobiology database (PBDB) querying actual fossil records.
+    # 7. Paleobiology database (PBDB) querying actual fossil records.
     # This turns the code from a predictive model to verifiable to actual data.
-    pbdb_url = "https://paleobiodb.org/data1.2/occs/list.json"
     
-    # Using lngmin/latmin instead of latlng to resolve the 400 error
+    pbdb_url = "https://paleobiodb.org/data1.2/occs/list.json"
     pbdb_params = {
-        "lngmin": lon - 0.5,
-        "lngmax": lon + 0.5,
-        "latmin": lat - 0.5,
-        "latmax": lat + 0.5,
-        "interval": "Cretaceous",
-        "show": "ident,class",
-        "limit": 10
+        "lngmin": lon - 0.5, "lngmax": lon + 0.5,
+        "latmin": lat - 0.5, "latmax": lat + 0.5,
+        "interval": "Cretaceous", "show": "ident,class", "limit": 10
     }
 
     fossil_list = []
@@ -601,8 +596,8 @@ def get_habitability_report():
             data = response.json().get('records', [])
             for r in data:
                 # In standard v1.2 (without 'vocab'), the keys are 'tna' and 'cll'
-                name = r.get('tna')
-                t_class = r.get('cll', 'Unknown')
+                name, t_class = r.get('tna'), r.get('cll', 'Unknown')
+                #t_class = r.get('cll', 'Unknown')
                 if name and name not in fossil_list:
                     fossil_list.append(f"{name} ({t_class})")
             
@@ -614,35 +609,86 @@ def get_habitability_report():
         fossil_list = [f"Connection error: {e}"]
     
 
-    # 6. Biome override logic
+    # 8. Biome override logic
+    
     # Check if the fossils found suggest a marine environment
-    marine_classes = ['Bivalvia', 'Cephalopoda', 'Gastropoda', 'Chondrichthyes', 'Actinopterygii']
-    found_marine = any(m_class in str(fossil_list) for m_class in marine_classes)
+    # Define taxonomic indicators
+    # Marine Specialists (cannot exist on land)
+    
+    deep_marine_taxa = ['Platecarpus', 'Mosasaur', 'Plesiosaur', 'Ichthyornis', 'Hesperornis', 'Xiphactinus', \
+                        'Cephalopoda', 'Ammonite', 'Toxochelys']
+    shallow_marine_taxa = ['Bivalvia', 'Acutostrea', 'Agerostrea', 'Oyster', 'Gastropoda', 'Anthozoa']
 
-    if found_marine and not is_marine:
-      env_label = "🌊 Marine (Overriden by Fossil Evidence)"
-      # Adjust temperature slightly: water stays cooler than inland land
-      paleo_temp -= 3.0
+    # Land Specialists 
+    land_taxa = ['Anklyosaur', 'Hadrosaur', 'Tyrannosaur', 'Certopsid', 'Ornithischia', 'Lycopodiopsida' \
+                 'Pteridopsida', 'Anthozoa']
 
-    # 7. Habitability Scoring
+    # Evaluate fossil evidence
+
+    fossil_str = str(fossil_list)
+    has_deep = any(x.lower() in fossil_str.lower() for x in deep_marine_taxa)
+    has_shallow = any(x.lower() in fossil_str.lower() for x in shallow_marine_taxa)
+    has_land = any(x.lower() in fossil_str.lower() for x in land_taxa)
+
+    # Environment and Depth Synthesis 
+
+    if has_deep:
+        env_label = "🌊 Deep Marine (Fossil Override)"
+        depth_label = f"{round(max(net_depth, 100))}m"
+        experience = "You are treading water in a vast seaway. Apex predators are circling below."
+
+    elif is_submerged and not has_land:
+        env_label = "🌊 Submerged Continental Shelf (Dynamic Model)"
+        depth_label = f"{round(net_depth)}m"
+        experience = "Though the plate is continental, high sea levels have flooded this region."
+
+    elif is_submerged and has_land:
+        env_label = "🌊 Coastal Marine (Bloat & Float Zone)"
+        depth_label = f"{round(net_depth)}m"
+        experience = "You are in shallow water. Land is nearby, as land fossils are present."
+
+    else:
+        env_label = "🌋 Terrestrial/Inland"
+        depth_label = "N/A"
+        experience = "You're on firm ground in a humid Cretaceous world."
+  
+
+    # 9. Habitability Scoring
     # Human: optimal at 22°C. Drastic drop after 35°C (wet bulb/heat stroke limits).
     human_score = max(0, min(100, 100 - (abs(paleo_temp - 22) ** 1.5) * 2))
 
     # Dinosaur: optimal at 32°C. Large theropods handled heat better than cold.
     dino_score = max(0, min(100, 100 - (abs(paleo_temp - 32) ** 1.3) * 2))
 
-    # 8. Display Results
+    # Adjust scores: being in deep water lower human habitability significantly
+    if is_submerged:
+       human_score = 10
+
+    if has_deep:
+       human_score = 10
+       dino_score = 60
+      
+    
+    # 10. Display Results
     print(f"\n --- 100 Ma Report: {location_name.upper()} ---")
-    print(f"Modern Coordinates:   {round(lat,2)}, {round(lon,2)}")
-    print(f"Paleo-Coordinates:    {round(p_lat,2)},{round(p_lon,2)}")
+    print(f"Modern Stats:   {round(lat,2)}, {round(lon,2)}) | Elev: {modern_elevation}m")
+    print(f"Paleo-Coordinates:    {round(p_lat,2)},{round(p_lon,2)} ({'N' if p_lat > 0 else 'S'})")
     print(f"Paleo-Latitude:       {round(lat,2)}°")
-    print(f"Above or Under Water: {env_label}")
+    print(f"Environment: {env_label}")
+    print(f"Local Experience: {experience}")
+                               
+    
+
+    # Only print depth if the status is not terrestrial i.e., below water
+    if has_deep or is_submerged:
+        print(f"Estimated Water Depth: {depth_label}")
     print(f"Paleo-temperature:    {paleo_temp}°C ({round(paleo_temp * 9/5 + 32, 1)}°F)")
     print(f"\n --- Ground Truth (🐚 Fossils Found Nearby) ---")
     if fossil_list:
         for f in fossil_list: print(f" - {f}")
     else:
         print("No specific fossils recorded in this sector yet.")
+
     print(f"\n--- Habitability Indices ---")
     print(f"👤Human:                {round(human_score)}/100")
     print(f"🦖Dinosaur:             {round(dino_score)}/100")
