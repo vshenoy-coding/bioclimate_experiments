@@ -103,3 +103,43 @@ print(f"Estimated Annual Rainfall: {results['paleo_precip']} mm")
 # Dual-Whittaker Code: entire x-axis has shifted, considering 100 million years ago
 # "Hothouse Earth" climate was entirely outside the modern tropical climate
 ########################################################################################
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+#1. Modern Data (From earlier 2023 analysis)
+# Assuming an average of transect points
+modern_temp = 27
+modern_precip = 1834
+
+# 2. Cretaceous Data (Based on -8.26 Paleo-Latitude)
+paleo_temp = results['paleo_temp']
+paleo_precip = results['paleo_precip']
+
+plt.figure(figsize=(10, 8))
+
+# Plot modern point
+plt.scatter(modern_temp, modern_precip, color='salmon', s=200, label='Modern Amazon (2023)', edgecolor='black', zorder=5)
+
+# Plot Cretaceous point
+plt.scatter(paleo_temp, paleo_precip, color='darkred', s=300, marker='*', label='Cretaceous Amazon (100 Ma)', edgecolor='black', zorder=5)
+
+# Add Whittaker Biome Boundaries (simplified)
+# These represent the 'envelope' of modern life
+plt.axvspan(20, 30, 0, 0.8, color='green', alpha=0.1, label='Modern Tropical Range')
+
+# Formatting the "Deep Time" Plot
+plt.title("Whittaker Plot: Modern vs. Cretaceous Amazon", fontsize=15)
+plt.xlabel("Mean Annual Temperature (°C)", fontsize=12)
+plt.ylabel("Annual Precipitation (mm)", fontsize=12)
+
+# We extend the limits to show how 'extreme' the Cretaceous was
+plt.xlim(15, 40)
+plt.ylim(0, 3500)
+
+plt.grid(linestyle='--', alpha=0.6)
+plt.legend()
+plt.annotate('Hothouse Shift', xy=(31, 2300), xytext=(22, 2800),
+             arrowprops=dict(facecolor='black', shrink=0.05))
+
+plt.show()
